@@ -51,6 +51,52 @@ for cap in [cap1, cap2]:
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
+
+
+def render_and_filter_heatmap(points_3d):
+    """Превращает 3D облако в чистую отфильтрованную 2D тепловую карту листа"""
+    pts = np.array(points_3d)
+    X, Y, Z = pts[:, 0], pts[:, 1], pts[:, 2]
+    
+    # Задаем фиксированную сетку под наш монитор оператора пресса (800х600 пикселей)
+    grid_w, grid_h = 800, 600
+    x_indices = np.interp(X, (X.min(), X.max()), (0, grid_w - 1)).astype(np.int32)
+    y_indices = np.interp(Y, (Y.min(), Y.max()), (0, grid_h - 1)).astype(np.int32)
+    
+    height_matrix = np.zeros((grid_h, grid_w), dtype=np.float32)
+    height_matrix[y_indices, x_indices] = Z
+    
+    # --- ВАШИ ИСПРАВЛЕНИЯ (ФИЛЬТРАЦИЯ ШУМА) ---
+    # Фильтр 1: Срезаем одиночный импульсный шум и выстрелы вебок в космос
+    height_filtered = cv2.medianBlur(height_matrix, 5)
+    
+    # Фильтр 2: Мертвая зона (Dead Zone). Всё, что меньше 3 мм перепада — цеховой шум, гасим в 0
+    dead_zone_mm = 3.0
+    height_filtered[np.abs(height_filtered) < dead_zone_mm] = 0.0
+    # ----------------------------------------
+    
+    z_max_val = np.max(np.abs(height_filtered))
+    if z_max_val == 0: z_max_val = 1.0
+    
+    # Переводим в байты для раскраски
+    img_gray = np.zeros_like(height_filtered, dtype=np.uint8)
+    img_gray[height_filtered > 0] = ((height_filtered[height_filtered > 0] / z_max_val) * 255).astype(np.uint8)
+    
+    # Накладываем палитру JET (Синий -> Зеленый -> Красный)
+    heatmap = cv2.applyColorMap(img_gray, cv2.COLORMAP_JET)
+    
+    # ТВОЯ ЛОГИКА: закрашиваем идеальную норму (0.0 мм) в чистый, ровный зеленый цвет
+    heatmap[height_filtered == 0.0] = (0, 180, 0)
+    
+    # Добавляем текстовые маркеры дефекта
+    cv2.putText(heatmap, f"MAX DEFECT: {z_max_val:.1f} mm", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+    cv2.putText(heatmap, "GREEN = OK | RED = HUMP (NEED PRESS)", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    
+    # Показываем плоскую отфильтрованную карту оператору
+    cv2.namedWindow("PROMETALL 3D - OPERATOR HEATMAP", cv2.WINDOW_NORMAL)
+    cv2.imshow("PROMETALL 3D - OPERATOR HEATMAP", heatmap)
+    print(f"[ПАНЕЛЬ] Карта высот выведена на экран. Максимальный горб: {z_max_val:.1f} мм.")
+
 def get_line_x_profile_raw_roi(frame, thresh, min_int, r_start, r_end):
     """Ищем субпиксельный центр масс линии строго внутри твоего залоченного JSON коридора"""
     b_channel = frame[:, :, 0]
@@ -203,7 +249,11 @@ while True:
                 if len(scanned_cloud_3d) > 0:
                     filename = "stereo_scan_result.ply"
                     save_to_ply(filename, scanned_cloud_3d)
-                    status_text = f"STATUS: MAP SAVED to {filename}."
+                    
+                    # ЗАПУСКАЕМ НАШУ МАГИЮ: Очищаем шум и рендерим плоскую теплокарту!
+                    render_and_filter_heatmap(scanned_cloud_3d)
+                    
+                    status_text = f"STATUS: MAP SAVED to {filename}. Heatmap active."
                 else:
                     status_text = "STATUS: ERROR. Empty cloud."
 
