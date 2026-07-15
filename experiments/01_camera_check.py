@@ -1,8 +1,8 @@
 import cv2
 
 # Меняем индексы на правильные видео-ноды
-cap1 = cv2.VideoCapture(0, cv2.CAP_V4L2)
-cap2 = cv2.VideoCapture(1, cv2.CAP_V4L2)
+cap1 = cv2.VideoCapture(1, cv2.CAP_V4L2)
+cap2 = cv2.VideoCapture(0, cv2.CAP_V4L2)
 
 # Ставим MJPEG, чтобы пролез Full HD
 for cap in [cap1, cap2]:
