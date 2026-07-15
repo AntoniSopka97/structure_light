@@ -4,32 +4,28 @@ import json
 import os
 import sys
 
+# --- НАСТРОЙКИ (можно вынести в JSON) ---
 PROJ_W, PROJ_H = 1920, 1080
 CONFIG_PATH = "config.json"
+TOLERANCE_MM = 2.0
+SMOOTH_FACTOR = 0.15 # Сглаживание 0..1
+PLOT_SIZE = (500, 250) # (W, H)
+REAL_BLOCK_MM = 15.0 # Для кнопки калибровки 'c'
 
-print("=== ЗАПУСК ПУЛЕНЕПРОБИВАЕМОГО 3D СТЕРЕО-СКАНЕРА ДЛЯ СТАЛИ ===")
+print("=== ЗАПУСК ОБНОВЛЕННОГО 3D СТЕРЕО-СКАНЕРА С ОНЛАЙН ГРАФИКОМ ===")
 
-# 1. Загрузка твоих идеальных порогов и залоченных ROI
+# Загрузка настроек
 if not os.path.exists(CONFIG_PATH):
     print(f"[ОШИБКА] Конфиг {CONFIG_PATH} не найден!")
     sys.exit(1)
-
 with open(CONFIG_PATH, "r") as f:
     config = json.load(f)
 
-thresh_val = config["Threshold"]
-min_intensity = config["Min_Intensity"]
-roi_l_start = config["roi_l_start"]
-roi_l_end = config["roi_l_end"]
-roi_r_start = config["roi_r_start"]
-roi_r_end = config["roi_r_end"]
-
-print(f"[ОК] Коридоры загружены -> Левый: [{roi_l_start}:{roi_l_end}], Правый: [{roi_r_start}:{roi_r_end}]")
-
+# Инициализация окон
 # 2. Настройка окон интерфейса оператора пресса (Экран 3440х1440)
-cv2.namedWindow("3D SCANNER - CONTROL INTERFACE", cv2.WINDOW_NORMAL)
-cv2.moveWindow("3D SCANNER - CONTROL INTERFACE", 50, 50)
-cv2.resizeWindow("3D SCANNER - CONTROL INTERFACE", 1300, 480)
+cv2.namedWindow("3D SCANNER", cv2.WINDOW_NORMAL)
+cv2.moveWindow("3D SCANNER", 50, 50)
+cv2.resizeWindow("3D SCANNER", 1300, 480)
 
 # Настройка проектора (Улетает на правый экран X=3440)
 cv2.namedWindow("PROJECTOR", cv2.WINDOW_NORMAL)
@@ -42,220 +38,110 @@ cv2.setWindowProperty("PROJECTOR", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREE
 pattern = np.zeros((PROJ_H, PROJ_W, 3), dtype=np.uint8)
 cv2.line(pattern, (PROJ_W // 2, 0), (PROJ_W // 2, PROJ_H), (255, 0, 0), 6)
 
-# 3. Инициализация вебок (твои индексы 1 и 0)
+
+
+
+# Камеры (индексы 1 и 0)
 cap1 = cv2.VideoCapture(1, cv2.CAP_V4L2)
 cap2 = cv2.VideoCapture(0, cv2.CAP_V4L2)
-
 for cap in [cap1, cap2]:
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
 
-
-
-def render_and_filter_heatmap(points_3d):
-    """Превращает 3D облако в чистую отфильтрованную 2D тепловую карту листа"""
-    pts = np.array(points_3d)
-    X, Y, Z = pts[:, 0], pts[:, 1], pts[:, 2]
-    
-    # Задаем фиксированную сетку под наш монитор оператора пресса (800х600 пикселей)
-    grid_w, grid_h = 800, 600
-    x_indices = np.interp(X, (X.min(), X.max()), (0, grid_w - 1)).astype(np.int32)
-    y_indices = np.interp(Y, (Y.min(), Y.max()), (0, grid_h - 1)).astype(np.int32)
-    
-    height_matrix = np.zeros((grid_h, grid_w), dtype=np.float32)
-    height_matrix[y_indices, x_indices] = Z
-    
-    # --- ВАШИ ИСПРАВЛЕНИЯ (ФИЛЬТРАЦИЯ ШУМА) ---
-    # Фильтр 1: Срезаем одиночный импульсный шум и выстрелы вебок в космос
-    height_filtered = cv2.medianBlur(height_matrix, 5)
-    
-    # Фильтр 2: Мертвая зона (Dead Zone). Всё, что меньше 3 мм перепада — цеховой шум, гасим в 0
-    dead_zone_mm = 3.0
-    height_filtered[np.abs(height_filtered) < dead_zone_mm] = 0.0
-    # ----------------------------------------
-    
-    z_max_val = np.max(np.abs(height_filtered))
-    if z_max_val == 0: z_max_val = 1.0
-    
-    # Переводим в байты для раскраски
-    img_gray = np.zeros_like(height_filtered, dtype=np.uint8)
-    img_gray[height_filtered > 0] = ((height_filtered[height_filtered > 0] / z_max_val) * 255).astype(np.uint8)
-    
-    # Накладываем палитру JET (Синий -> Зеленый -> Красный)
-    heatmap = cv2.applyColorMap(img_gray, cv2.COLORMAP_JET)
-    
-    # ТВОЯ ЛОГИКА: закрашиваем идеальную норму (0.0 мм) в чистый, ровный зеленый цвет
-    heatmap[height_filtered == 0.0] = (0, 180, 0)
-    
-    # Добавляем текстовые маркеры дефекта
-    cv2.putText(heatmap, f"MAX DEFECT: {z_max_val:.1f} mm", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-    cv2.putText(heatmap, "GREEN = OK | RED = HUMP (NEED PRESS)", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    # Показываем плоскую отфильтрованную карту оператору
-    cv2.namedWindow("PROMETALL 3D - OPERATOR HEATMAP", cv2.WINDOW_NORMAL)
-    cv2.imshow("PROMETALL 3D - OPERATOR HEATMAP", heatmap)
-    print(f"[ПАНЕЛЬ] Карта высот выведена на экран. Максимальный горб: {z_max_val:.1f} мм.")
-
-def get_line_x_profile_raw_roi(frame, thresh, min_int, r_start, r_end):
-    """Ищем субпиксельный центр масс линии строго внутри твоего залоченного JSON коридора"""
+def get_line_x(frame, cfg, side='l'):
+    """Субпиксельный поиск линии в ROI"""
+    r_start = cfg[f"roi_{side}_start"]
+    r_end = cfg[f"roi_{side}_end"]
     b_channel = frame[:, :, 0]
+    roi = b_channel[:, r_start:r_end]
     
-    # Зануляем всё, что вне твоего ROI
-    roi_masked = np.zeros_like(b_channel)
-    roi_masked[:, r_start:r_end] = b_channel[:, r_start:r_end]
+    _, th = cv2.threshold(roi, cfg["Threshold"], 255, cv2.THRESH_TOZERO)
+    th = th.astype(np.float32)
     
-    _, masked = cv2.threshold(roi_masked, thresh, 255, cv2.THRESH_TOZERO)
-    masked = masked.astype(np.float32)
+    sum_int = np.sum(th, axis=1)
+    x_indices = np.arange(roi.shape[1], dtype=np.float32)
+    sum_x_int = np.sum(th * x_indices, axis=1)
     
-    sum_intensity = np.sum(masked, axis=1)
-    max_intensity = np.max(masked, axis=1)
-    h, w = masked.shape
-    x_indices = np.arange(w, dtype=np.float32).reshape(1, -1)
-    
-    sum_x_intensity = np.sum(masked * x_indices, axis=1)
-    
-    centers_x = np.full(h, -1.0, dtype=np.float32)
-    valid_rows = (max_intensity >= min_int) & (sum_intensity > 0)
-    centers_x[valid_rows] = sum_x_intensity[valid_rows] / sum_intensity[valid_rows]
-    return centers_x
+    centers = np.full(th.shape[0], -1.0, dtype=np.float32)
+    mask = (sum_int > cfg["Min_Intensity"])
+    centers[mask] = (sum_x_int[mask] / sum_int[mask]) + r_start
+    return centers
 
-def save_to_ply(filename, points_3d):
-    """Сохранение облака точек в формат PLY с цветовым кодированием рельефа"""
-    header = f"""ply
-format ascii 1.0
-element vertex {len(points_3d)}
-property float x
-property float y
-property float z
-property uchar red
-property uchar green
-property uchar blue
-end_header
-"""
-    with open(filename, "w") as f:
-        f.write(header)
-        for p in points_3d:
-            x_v, y_v, z_v = p[0], p[1], p[2]
-            # Градиент: горбы краснеют, ямы синеют
-            r = int(np.clip(abs(z_v) * 25, 0, 255)) if z_v > 0 else 0
-            b = int(np.clip(abs(z_v) * 25, 0, 255)) if z_v <= 0 else 0
-            g = int(max(0, 255 - max(r, b)))
-            f.write(f"{x_v:.2f} {y_v:.2f} {z_v:.2f} {r} {g} {b}\n")
-    print(f"[УСПЕХ] Физическая 3D карта высот детали записана: {filename}")
-
-base_wall_disparity = None # Базовая диспаратность пустой плоской стены
-scanned_cloud_3d = []      # Хранилище точек рельефа
-is_scanning = False
-frame_counter = 0
-status_text = "STATUS: SCENE ACTIVE. Press 'b' to reset baseline (WALL)."
+# Переменные логики
+base_disp = None
+scale_mm_pix = 1.5
+smoothed_dev = 0.0
+history = []
+status = "Нажми 'b' для калибровки нуля (стены)"
 
 while True:
-    cv2.imshow("PROJECTOR", pattern)
     ret1, f1 = cap1.read()
     ret2, f2 = cap2.read()
     if not ret1 or not ret2: continue
+
+    line_l = get_line_x(f1, config, 'l')
+    line_r = get_line_x(f2, config, 'r')
     
-    # Ищем линии СТРОГО на сырых кадрах внутри твоих коридоров из json
-    line_x_left = get_line_x_profile_raw_roi(f1, thresh_val, min_intensity, roi_l_start, roi_l_end)
-    line_x_right = get_line_x_profile_raw_roi(f2, thresh_val, min_intensity, roi_r_start, roi_r_end)
-    
+    # Визуализация и расчет
+    vis = cv2.addWeighted(f1, 0.5, f2, 0.5, 0)
     h, w = f1.shape[:2]
-    current_frame_disparity = np.zeros(h, dtype=np.float32)
-    current_frame_points_3d = []
-    
-    vis_l, vis_r = f1.copy(), f2.copy()
-    
-    # Отрисовываем твои залоченные коридоры ROI тонкими линиями на экране
-    cv2.line(vis_l, (roi_l_start, 0), (roi_l_start, h), (0, 255, 255), 1)
-    cv2.line(vis_l, (roi_l_end, 0), (roi_l_end, h), (0, 255, 255), 1)
-    cv2.line(vis_r, (roi_r_start, 0), (roi_r_start, h), (0, 255, 255), 1)
-    cv2.line(vis_r, (roi_r_end, 0), (roi_r_end, h), (0, 255, 255), 1)
-    
+    current_disp = line_l - line_r
+    raw_dev = 0.0
+    plot_pts = []
+
+    # Расчет дефектов
     for y in range(h):
-        xl, xr = line_x_left[y], line_x_right[y]
-        if xl > 0 and xr > 0:
-            # Подсвечиваем центроид линии красной точкой — ты увидишь её СТРОГО по центру ROI
-            cv2.circle(vis_l, (int(xl), y), 2, (0, 0, 255), -1)
-            cv2.circle(vis_r, (int(xr), y), 2, (0, 0, 255), -1)
-            
-            # Чистый сдвиг луча между камерами в пикселях
-            current_frame_disparity[y] = xl - xr
-            
-            # Если идет сканирование детали и базовый профиль стены сохранен
-            if is_scanning and base_wall_disparity is not None:
-                base_disp = base_wall_disparity[y]
-                if base_disp != 0:
-                    # Разница диспаратности: чем ближе горб, тем сильнее сдвиг пикселей луча!
-                    delta_disp = (xl - xr) - base_disp
-                    
-                    # Эмпирический перевод пиксельного излома в мм высоты для настольного теста
-                    # 1 пиксель сдвига примерно равен 1.5 мм высоты детали на столе
-                    z_height_mm = delta_disp * 1.5 
-                    
-                    # Продольный шаг конвейера во времени (2 мм на кадр)
-                    time_step_y = float(frame_counter) * 2.0
-                    # Поперечная координата X (просто пиксели, переведенные в масштаб мм)
-                    x_mm = (xl - w // 2) * 0.5
-                    
-                    current_frame_points_3d.append([x_mm, time_step_y, z_height_mm])
-
-    if is_scanning and len(current_frame_points_3d) > 0:
-        scanned_cloud_3d.extend(current_frame_points_3d)
-        frame_counter += 1
-
-    # Вывод интерфейса оператора
-    p_l = cv2.resize(vis_l, (640, 360))
-    p_r = cv2.resize(vis_r, (640, 360))
-    interface_img = np.hstack((p_l, p_r))
-    
-     
-    status_bar = np.zeros((70, interface_img.shape[1], 3), dtype=np.uint8)
-
-    color = (0, 0, 255) if is_scanning else (0, 255, 0)
-    cv2.putText(status_bar, status_text, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-    interface_img = np.vstack((interface_img, status_bar))
-    
-    cv2.imshow("3D SCANNER - CONTROL INTERFACE", interface_img)
-    
-    key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
-        break
-    elif key == ord('b'):
-        # Кнопка 'b' — Запоминаем плоскую пустую стену как Ноль
-        if np.any(current_frame_disparity != 0):
-            base_wall_disparity = current_frame_disparity.copy()
-            status_text = "STATUS: BASE WALL CALIBRATED. Press 's' to START recording."
-            print("[БАЗА ОК] Профиль пустой стены успешно сохранен.")
-        else:
-            status_text = "STATUS: ERROR. Cannot see line inside ROI corridors!"
-            print("[ОШИБКА] Линия пустая, проверь маску.")
-    elif key == ord('s'):
-        if base_wall_disparity is None:
-            status_text = "STATUS: ERROR. Press 'b' first to calibrate empty wall!"
-        else:
-            if not is_scanning:
-                is_scanning = True
-                scanned_cloud_3d = []
-                frame_counter = 0
-                status_text = "STATUS: RECORDING ACTIVE! Move your board through the beam..."
-                print("[ЗАПИСЬ ЗАПУЩЕНА] Копим кадры рельефа.")
-            else:
-                is_scanning = False
-                status_text = "STATUS: COMPUTING MAP... Saving PLY."
-                cv2.imshow("3D SCANNER - CONTROL INTERFACE", interface_img)
-                cv2.waitKey(50)
+        if line_l[y] > 0 and line_r[y] > 0:
+            if base_disp is not None:
+                delta = current_disp[y] - base_disp[y]
+                z_mm = delta * scale_mm_pix
+                if abs(z_mm) > abs(raw_dev): raw_dev = z_mm
                 
-                if len(scanned_cloud_3d) > 0:
-                    filename = "stereo_scan_result.ply"
-                    save_to_ply(filename, scanned_cloud_3d)
-                    
-                    # ЗАПУСКАЕМ НАШУ МАГИЮ: Очищаем шум и рендерим плоскую теплокарту!
-                    render_and_filter_heatmap(scanned_cloud_3d)
-                    
-                    status_text = f"STATUS: MAP SAVED to {filename}. Heatmap active."
-                else:
-                    status_text = "STATUS: ERROR. Empty cloud."
+                # Точки графика
+                px = int((y / h) * PLOT_SIZE[0])
+                py = int((PLOT_SIZE[1] // 2) - (z_mm * 4.0))
+                plot_pts.append((px, max(10, min(PLOT_SIZE[1]-10, py))))
+
+    # Отрисовка графика (аналог live_plots.py)
+    plot_img = np.zeros((PLOT_SIZE[1], PLOT_SIZE[0], 3), dtype=np.uint8)
+    cv2.line(plot_img, (0, PLOT_SIZE[1]//2), (PLOT_SIZE[0], PLOT_SIZE[1]//2), (100,100,100), 1)
+    if len(plot_pts) > 1:
+        cv2.polylines(plot_img, [np.array(plot_pts)], False, (0,255,0), 2)
+    
+    # История пиков
+    if base_disp is not None and abs(raw_dev) > 0.1:
+        history.append(raw_dev)
+        if len(history) > PLOT_SIZE[0]: history.pop(0)
+    for i, p in enumerate(history):
+        py = int((PLOT_SIZE[1] // 2) - (p * 4.0))
+        cv2.circle(plot_img, (i, max(10, min(PLOT_SIZE[1]-10, py))), 1, (0,165,255), -1)
+
+    # Сглаживание и вывод
+    smoothed_dev = (SMOOTH_FACTOR * raw_dev) + ((1.0 - SMOOTH_FACTOR) * smoothed_dev)
+    
+    # UI
+    cv2.rectangle(vis, (0, h-PLOT_SIZE[1]), (PLOT_SIZE[0], h), (20,20,20), -1)
+    vis[h-PLOT_SIZE[1]:h, 0:PLOT_SIZE[0]] = plot_img
+    
+    color = (0, 255, 0) if abs(smoothed_dev) < TOLERANCE_MM else (0, 0, 255)
+    cv2.putText(vis, f"Dev: {smoothed_dev:.2f}mm | Scale: {scale_mm_pix:.3f}", (10, h-10), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+    cv2.putText(vis, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1)
+
+    cv2.imshow("3D SCANNER", vis)
+    cv2.imshow("PROJECTOR", pattern)
+
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27: break
+    elif key == ord('b'):
+        base_disp = current_disp.copy()
+        status = "База установлена (0 мм)"
+    elif key == ord('c'):
+        if base_disp is not None and abs(smoothed_dev) > 0.1:
+            scale_mm_pix = (REAL_BLOCK_MM / abs(smoothed_dev)) * scale_mm_pix
+            status = f"Калибровка: {scale_mm_pix:.4f} мм/пикс"
+        else: status = "Ошибка калибровки (нужен брусок)"
 
 cap1.release()
 cap2.release()
