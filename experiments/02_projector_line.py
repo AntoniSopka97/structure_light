@@ -63,8 +63,8 @@ pattern = np.zeros((PROJ_H, PROJ_W, 3), dtype=np.uint8)
 cv2.line(pattern, (PROJ_W // 2, 0), (PROJ_W // 2, PROJ_H), (255, 0, 0), 6)
 
 # 6. Инициализация вебок (твои индексы 1 и 0)
-cap1 = cv2.VideoCapture(1, cv2.CAP_V4L2)
-cap2 = cv2.VideoCapture(0, cv2.CAP_V4L2)
+cap1 = cv2.VideoCapture(0, cv2.CAP_V4L2)
+cap2 = cv2.VideoCapture(2, cv2.CAP_V4L2)
 
 for cap in [cap1, cap2]:
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
