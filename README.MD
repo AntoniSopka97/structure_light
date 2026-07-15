@@ -11,9 +11,22 @@
 
 ## 📸 Демонстрация
 
-| 3D-реконструкция| Сканирование в реальном времени   |
-| :-: | :-: |
-| ![Демонстрация работы профилометра](media/3d_scan_auto.gif) | media/scan_trimmed.mp4 |
+<table>
+  <tr>
+    <th align="center">3D-реконструкция</th>
+    <th align="center">Сканирование в реальном времени</th>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="media/3d_scan_auto.gif" alt="Демонстрация работы профилометра" width="100%">
+    </td>
+    <td align="center" valign="top">
+      <video src="media/scan_trimmed.mp4" controls style="max-width: 100%;">
+        Ваш браузер не поддерживает видео.
+      </video>
+    </td>
+  </tr>
+</table>
 
 
 
