@@ -1,4 +1,8 @@
 {
-    "Threshold": 194,
-    "Min_Intensity": 139
+    "Threshold": 248,
+    "Min_Intensity": 139,
+    "roi_l_start": 1093,
+    "roi_l_end": 1164,
+    "roi_r_start": 712,
+    "roi_r_end": 822
 }

@@ -12,8 +12,8 @@ os.makedirs(PATH_LEFT, exist_ok=True)
 os.makedirs(PATH_RIGHT, exist_ok=True)
 
 # Твои рабочие индексы на Linux (Левая - 1, Правая - 0)
-cap1 = cv2.VideoCapture(0, cv2.CAP_V4L2)
-cap2 = cv2.VideoCapture(2, cv2.CAP_V4L2)
+cap1 = cv2.VideoCapture(1, cv2.CAP_V4L2)
+cap2 = cv2.VideoCapture(0, cv2.CAP_V4L2)
 
 for cap in [cap1, cap2]:
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
